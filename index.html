@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+
+.states {
+  fill: #d3d3d3;
+  stroke: #ffffff;
+  stroke-linejoin: round;
+}
+.q0-9 { fill: #d9e0f2; }
+.q1-9 { fill: #99b2dc; }
+.q2-9 { fill: #5e8dc9; }
+.q3-9 { fill: #2f5491; }
+.q4-9 { fill: #0e2344; }
+
+.tooltip {
+  position: absolute;
+  left: 75px;
+  text-align: center;
+  height: 12px;
+  padding: 8px;
+  font-size: 13px;
+  background: #FFFFFF;
+  border: 1px solid #989898;
+  pointer-events: none;
+}
+svg	.rectbar {
+            fill: steelblue;
+            stroke-width: 0px;
+        }
+svg	.rectbar:hover {
+            fill: blue;
+        }
+</style>
+<body>
+	<table>
+		<tr>
+			<td><div id="title_bar"><h2>Losses 2015[$] Damage Type: All </h2> </div></td>
+			<td><div id="title_bar"><h2>Losses 2015[$] State: All </h2> </div>	</td>
+		</tr>
+		<tr>
+				<td>
+					<div id= "g-chart_id"class="g-chart">
+				</td>
+				<td>
+				<div>
+					<svg id="svg_bar"></svg>
+				</div>
+				</td>
+		</tr>
+	</table>
+</body>
+
+<!-- Sripts for queue and topojson which are used for the US map-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/queue-async/1.0.7/queue.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/1.6.19/topojson.min.js"></script>
+
+<!-- Two versions of D3 are used -->
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script>
+		d3version5 = d3
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.17/d3.min.js"></script>
+<script>
+		d3version3 = d3
+</script>
+
+
+<script type="text/javascript">
+
+			var usa;
+            var myEntireData;
+            var myData_bar;
+			var element
+			var USmap
+			
+			// set dimensions for Map and Bar plot
+			var margin_map = {top: 10, left: 10, bottom: 10, right: 10}
+				, width = 900 - margin_map.left - margin_map.right
+				, height = 900 - margin_map.top - margin_map.bottom;
+			var margin_bar = {top: 10, right: 10, bottom: 30, left: 300};
+            var svgWidth = 900 - margin_bar.left - margin_bar.right;
+            var svgHeight = 500 - margin_bar.top - margin_bar.bottom;
+				
+			// Using Queue.js for fetching the data files 
+			recreatePlot();
+			
+			// Using D3 version 3 to project USA Map i.e. albersUSA  
+			var project = d3version3.geo.albersUsa().scale(width).translate([width / 2, height / 2]);
+			var path = d3version3.geo.path().projection(project);
+	
+			// Moving selection to back and front
+			d3version3.selection.prototype.moveToBack = function() { 
+			  return this.each(function() { 
+			  var firstChild = this.parentNode.firstChild; 
+					if (firstChild) { this.parentNode.insertBefore(this, firstChild); } 
+			  }); 
+			};
+			d3version3.selection.prototype.moveToFront = function() { return this.each(function() {
+			this.parentNode.appendChild(this);});
+			}; 
+			
+			// Mapping function 
+			function mapping(error, usdata, fetchdata, description) {
+				if (error) throw error;
+				
+				myEntireData = fetchdata;
+				element = d3version3.select(".g-chart").append("div").attr("class", "tooltip").style("opacity", 0);
+				USmap = d3version3.select(".g-chart").append("svg") .style('width', width + 'px') .style('height', height + 'px');
+				load(myEntireData);
+				usa = usdata;
+				
+				var rangeNum = d3version3.sum(fetchdata, function(d) {return d.Amount;}); 
+				var quantize = d3version3.scale.quantize().domain([0, rangeNum/10]).range(d3.range(5).map(function(i) { return "q" + i + "-9"; }));
+ 
+				//Pairing data and state name with state id
+				var pairData = {};
+				fetchdata.forEach(function(d) { pairData[d.State_Id] = +d.Amount_Grouped; });
+				var pairState = {};
+				fetchdata.forEach(function(d) { pairState[d.State_Id] = d.State_Grouped; });
+
+				USmap.append("g")
+					.attr("class", "states")
+					.selectAll("path")
+					.data(topojson.feature(usdata, usdata.objects.states).features)
+					.enter().append("path")
+					.attr("d", path)
+					.attr("class", function(d) { return quantize(pairData[d.id]); })
+					
+					.on("mouseover", function(d) {
+					var sel = d3.select(this);
+					sel.moveToFront();
+					d3.select(this).transition().duration(300).style("opacity", 0.8);
+					element.transition().duration(300)
+					.style("opacity", 1)
+					element.text(pairState[d.id] + ": " + pairData[d.id])
+					.style("left", (d3.event.pageX) + "px")
+					.style("top", (d3.event.pageY -30) + "px");
+					removeCurrentBarChart();
+					loadBar(fetchdata, pairState[d.id]);
+				})
+    
+					.on("mouseout", function() {
+					var sel = d3.select(this);
+					sel.moveToBack();
+					d3.select(this)
+					.transition().duration(300)
+					.style("opacity", 1);
+					element.transition().duration(300)
+					.style("opacity", 0);
+					removeCurrentBarChart();
+					load(fetchdata);
+				});
+     
+			}
+	
+			function loadBar(fetchdata, s) {
+				myData_bar = d3version5.nest()
+                            .key(function(d) { return d.Damage_Descp;})
+                            .rollup(function(d) { 
+							return d3version5.sum(d, function(g) {return g.Amount; });
+                            })
+                            .entries(fetchdata.filter(function(d) {return d.State_Abv == s;}))  
+				createBarChart(myData_bar);
+				}
+	
+			function removeCurrentBarChart(){
+				var svg = d3version5.select("#svg_bar")
+		        svg.selectAll("*").remove();
+				}
+			
+			function removeCurrentMap() {
+				var svg = d3version5.select("#g-chart_id")
+		        svg.selectAll("*").remove();
+				}
+	
+			function load(fetchdata) {
+				myData_bar = d3version5.nest()
+							.key(function(d) { return d.Damage_Descp;})
+							.rollup(function(d) { 
+							return d3version5.sum(d, function(g) {return g.Amount; });
+							})
+							.entries(fetchdata)  			
+				createBarChart(myData_bar);
+			}
+
+			function createBarChart(myData) {
+			 
+				var svg  = 	 d3.select("#svg_bar")
+							  .attr("width", svgWidth + margin_bar.left + margin_bar.right)
+							  .attr("height", svgHeight + margin_bar.top + margin_bar.bottom)
+							  .append("g")
+						        .attr("id", "svg_tree_g_id")
+							  .attr("transform", "translate(" + margin_bar.left + "," + margin_bar.top + ")");
+
+                var xScale = d3version5.scaleLinear()
+                                    .domain([0, d3version5.max(myData, function(d) { return d.value; })])
+                                    .range([0, svgWidth]);
+
+                var yScale = d3version5.scaleBand()
+							.domain(myData.sort(function(a, b) { return d3version5.descending(a.value, b.value);}).map( function(d) 
+                                      { return d.key;
+                                      }))                               
+                            .range([svgHeight, 0])
+							.paddingInner(0.200);
+									 
+                // generate axis
+                svg.append("g")
+					.attr("transform", "translate(0," + (svgHeight) + ")")
+                    .call(d3version3.svg.axis().scale(xScale).orient("bottom").ticks(7));
+
+                svg.append("g")
+                    .call(d3version3.svg.axis().scale(yScale).orient("left"));
+
+				// generate bars
+				svg.selectAll("rect")
+					.data(myData)
+					.enter()
+					.append("rect")
+					.attr("x", function(d, i)
+                    {   
+                      return 0;
+                    })
+					.attr("y", function(d, i)
+                    {
+                      return yScale(d.key);
+                    })
+					.attr("height", function(d, i)
+                    {
+					return yScale.bandwidth();
+                      //return svgHeight-yScale(d.value);  
+                    })
+					.attr("width", function(d, i)
+                    {
+                      return xScale(d.value);
+                    })
+			
+				.on("mouseover", function(d) {
+					var sel = d3.select(this);
+					sel.moveToFront();
+					d3.select(this).transition().duration(300).style("opacity", 0.8);
+					element.transition().duration(300)
+					.style("opacity", 1)
+					element.text(d.value)
+					.style("left", (d3.event.pageX) + "px")
+					.style("top", (d3.event.pageY -30) + "px");
+					selectedStates(d.key);
+									 
+					}).on("mouseout", function() {
+					  var sel = d3.select(this);
+					  sel.moveToBack();
+					  d3.select(this)
+					  .transition().duration(300)
+					  .style("opacity", 1);
+					  element.transition().duration(300)
+					  .style("opacity", 0);
+					  removeCurrentMap();
+					  removeCurrentBarChart();
+					  recreatePlot();
+
+					})
+                  .attr("class", "rectbar");
+				}
+			
+				function selectedStates(description) {
+					var filteredData = myEntireData.filter(function(d) {return d.Damage_Descp == description;})	
+					var domainLimit = d3version3.sum(filteredData, function(d) {return d.Amount;}); 
+					var quantize = d3version3.scale.quantize()
+									.domain([0, domainLimit/10])
+									.range(d3.range(5).map(function(i) { return "q" + i + "-9"; }));
+									
+					//Pairing data and state name with state id
+					var pairData = {};
+					filteredData.forEach(function(d) { pairData[d.State_Code] = d.Amount; });
+					var pairState = {};
+					(myEntireData.filter(function(d) {return d.Damage_Descp == description;})).forEach(function(d) { pairState[d.State_Code] = d.State_Abv; });
+
+					USmap.append("g")
+						 .attr("class", "states")
+						 .selectAll("path")
+						 .data(topojson.feature(usa, usa.objects.states).features)
+						 .enter().append("path")
+						 .attr("d", path)
+						 .attr("class", function(d) { return quantize(pairData[d.id]); })
+				}
+				function recreatePlot(){
+					queue()
+					.defer(d3.json, "https://raw.githubusercontent.com/shubhamgupta020/VisualAnalytics/master/us-10m.json")
+					.defer(d3.csv, "https://raw.githubusercontent.com/shubhamgupta020/VisualAnalytics/master/losses2015_transformed%20(1).csv")
+					.await(mapping);
+				}
+</script>
